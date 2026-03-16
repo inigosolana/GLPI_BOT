@@ -1,8 +1,9 @@
 # glpi-voice-bot — dependencias Python
 # Instalar con: pip install -r requirements.txt
 
-# LiveKit Agents con todos los plugins necesarios (0.12.x recomendado para esta implementación)
-livekit-agents[deepgram,cartesia,openai,silero]==0.12.*
+# LiveKit Agents con todos los plugins necesarios
+# ⚠ Mantener en 0.11.x — la v1.0 tiene una API completamente distinta
+livekit-agents[deepgram,cartesia,openai,silero]>=0.11,<1.0
 
 # Cliente HTTP síncrono (usado con asyncio.to_thread para no bloquear el event loop)
 requests>=2.31
