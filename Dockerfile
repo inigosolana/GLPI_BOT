@@ -1,28 +1,28 @@
-# Dockerfile para glpi-voice-bot
-
 FROM python:3.11-slim
 
-# Evitar que Python genere archivos .pyc y habilitar logs en tiempo real
+# Evitar preguntas interactivas durante instalación
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Instalar dependencias del sistema necesarias (si las hubiera)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
-# Instalar dependencias de Python
+# Instalar dependencias del sistema necesarias para audio
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libsndfile1 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el código de la aplicación
+# Descargar modelos necesarios (Silero VAD) en tiempo de build
 COPY . .
+RUN python agent.py download-files
 
-# Descargar archivos necesarios (VAD, etc.) para evitar descargas en runtime si es posible
-# Nota: silero-vad se descarga la primera vez que se usa, pero podemos forzarlo aquí
-RUN python -c "from livekit.plugins import silero; silero.VAD.load()"
+# Carpeta para transcripciones (volumen montable)
+RUN mkdir -p /app/transcripciones
 
-# Comando por defecto para arrancar el agente
+# Arrancar el agente
 CMD ["python", "agent.py", "start"]

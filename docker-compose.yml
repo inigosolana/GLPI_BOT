@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.9"
 
 services:
   glpi-voice-bot:
@@ -7,8 +7,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # El agente necesita conectarse a LiveKit Cloud/Server, por lo que necesita salida a internet
-    network_mode: "host" # Recomendado para evitar problemas con WebRTC/UDP si se corre local
+    volumes:
+      - ./transcripciones:/app/transcripciones
+    environment:
+      - PYTHONUNBUFFERED=1
     logging:
       driver: "json-file"
       options:
