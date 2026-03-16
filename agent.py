@@ -131,7 +131,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # TTS: Cartesia Sonic Multilingual — voz y parámetros óptimos para telefonía (8 kHz)
         tts=cartesia.TTS(
             model="sonic-multilingual",
-            voice="a0e99841-438c-4a64-b679-ae501e7d6091",
+            voice="cefcb124-080b-4655-b31f-932f3ee743de",
             encoding="pcm_s16le",
             sample_rate=8000,
         ),
