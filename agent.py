@@ -16,7 +16,7 @@ import logging
 from livekit import rtc
 from livekit.agents import llm, AutoSubscribe, JobContext, WorkerOptions, cli
 from livekit.agents.llm import ChatContext, ChatMessage
-from livekit.agents.voice_assistant import VoicePipelineAgent
+from livekit.agents.pipeline import VoicePipelineAgent
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 import config  # noqa: F401 — importar para validar variables de entorno al inicio
