@@ -17,9 +17,12 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Descargar modelos necesarios (Silero VAD) en tiempo de build
+# Copiar el resto del código
 COPY . .
-RUN python agent.py download-files
+
+# Descargar modelos necesarios (Silero VAD) en tiempo de build
+# Lo hacemos directamente con python para evitar que el CLI de agent.py intente validar configs
+RUN python -c "from livekit.plugins import silero; silero.VAD.load()"
 
 # Carpeta para transcripciones (volumen montable)
 RUN mkdir -p /app/transcripciones
