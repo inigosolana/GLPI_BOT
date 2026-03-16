@@ -111,7 +111,10 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 6. Construir el VoicePipelineAgent ────────────────────────────────────
     agent = VoicePipelineAgent(
         # VAD: Silero detecta cuando el usuario empieza/para de hablar
-        vad=silero.VAD.load(),
+        # Umbral alto (0.85) para telefonía SIP — evita que eco/ruido corte al agente
+        vad=silero.VAD.load(
+            activation_threshold=0.85,
+        ),
 
         # STT: Deepgram Nova-2 en español
         stt=deepgram.STT(
@@ -138,6 +141,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
         # Tools disponibles para el LLM
         fnc_ctx=tools,
+
+        # Parámetros anti-interrupción para telefonía SIP
+        interrupt_min_words=2,          # mínimo 2 palabras del usuario para interrumpir
+        min_endpointing_delay=0.8,      # esperar 0.8s de silencio antes de procesar
     )
 
     # ── 7. Listeners para transcripción en tiempo real ─────────────────────────
@@ -161,7 +168,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # Saludo inicial
         await agent.say(
             "Hola, soy el asistente de helpdesk. ¿En qué puedo ayudarte hoy?",
-            allow_interruptions=True,
+            allow_interruptions=False,
         )
         logger.info("VoicePipelineAgent activo y esperando interacción del comercial.")
         # Mantener el agente vivo hasta que la llamada termine (máximo 1 hora)
