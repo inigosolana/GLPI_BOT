@@ -107,7 +107,19 @@ async def entrypoint(ctx: JobContext) -> None:
         fnc_ctx=tools,
     )
 
-    # ── 6. Arrancar el agente en la Room ──────────────────────────────────────
+    # ── 6. Listeners para transcripción (Logs) ──────────────────────────────
+    
+    @agent.on("user_speech_committed")
+    def on_user_speech(msg: llm.ChatMessage):
+        if msg.text:
+            logger.info(f"TRANSCRIPCIÓN USUARIO: {msg.text}")
+
+    @agent.on("agent_speech_committed")
+    def on_agent_speech(msg: llm.ChatMessage):
+        if msg.text:
+            logger.info(f"TRANSCRIPCIÓN AGENTE: {msg.text}")
+
+    # ── 7. Arrancar el agente en la Room ──────────────────────────────────────
     agent.start(ctx.room, participant)
 
     # Saludo inicial: el agente toma la iniciativa en cuanto se conecta
