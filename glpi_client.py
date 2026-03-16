@@ -230,3 +230,32 @@ class GLPIClient:
             logger.warning("No se pudo buscar usuario por teléfono %s: %s", phone, exc)
 
         return None
+
+    # ── Seguimientos (followups) ───────────────────────────────────────────────
+
+    async def add_followup(self, ticket_id: int, content: str) -> None:
+        """
+        Añade un seguimiento (ITILFollowup) a un ticket existente.
+
+        Se usa para adjuntar la transcripción completa de la llamada al ticket
+        una vez que este ha sido creado durante la conversación.
+
+        Parámetros:
+            ticket_id — ID del ticket al que añadir el followup
+            content   — Texto del seguimiento (la transcripción formateada)
+        """
+        payload = {
+            "input": {
+                "itemtype": "Ticket",
+                "items_id": ticket_id,
+                "content": content,
+                "is_private": 0,  # 0 = público (visible al solicitante)
+            }
+        }
+        try:
+            await self._request("POST", "/ITILFollowup", json=payload)
+            logger.info("Followup añadido correctamente al ticket GLPI %d.", ticket_id)
+        except Exception as exc:
+            logger.warning(
+                "No se pudo añadir followup al ticket %d: %s", ticket_id, exc
+            )

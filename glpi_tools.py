@@ -8,12 +8,15 @@ el LLM sepa exactamente qué valor enviar.
 """
 
 import logging
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
 from livekit.agents import llm
 from livekit.agents.llm import FunctionContext
 
 from glpi_client import GLPIClient
+
+if TYPE_CHECKING:
+    from transcription import CallTranscription
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +29,17 @@ class GLPITools(FunctionContext):
     modelo de lenguaje, que decide autónomamente cuándo y cómo invocar cada tool.
     """
 
-    def __init__(self, glpi_client: GLPIClient, room=None) -> None:
+    def __init__(self, glpi_client: GLPIClient, room=None, transcription: Optional["CallTranscription"] = None) -> None:
         """
         Parámetros:
-            glpi_client — Instancia de GLPIClient ya configurada
-            room        — Referencia a la Room de LiveKit para poder desconectarse
+            glpi_client   — Instancia de GLPIClient ya configurada
+            room          — Referencia a la Room de LiveKit para poder desconectarse
+            transcription — Instancia de CallTranscription para adjuntar al ticket
         """
         super().__init__()
         self._glpi = glpi_client
         self._room = room
+        self._transcription = transcription
 
     # ── Tool: crear ticket ─────────────────────────────────────────────────────
 
@@ -79,6 +84,9 @@ class GLPITools(FunctionContext):
             )
             resultado = f"Ticket {ticket_id} creado correctamente"
             logger.info(resultado)
+            # Adjuntar la transcripción de la llamada al ticket si está disponible
+            if self._transcription is not None:
+                await self._transcription.save_to_glpi(self._glpi, ticket_id)
             return resultado
         except Exception as exc:
             logger.error("Error al crear ticket: %s", exc, exc_info=True)
