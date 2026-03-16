@@ -73,6 +73,9 @@ async def entrypoint(ctx: JobContext) -> None:
     """
     logger.info("Nuevo job recibido: room='%s'", ctx.room.name)
 
+    # Validar configuración antes de intentar conectar
+    config.validate_config()
+
     # ── 1. Conectar a la Room (solo audio, sin vídeo) ──────────────────────────
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 

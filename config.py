@@ -1,48 +1,40 @@
 """
-config.py — Carga y validación de variables de entorno para glpi-voice-bot.
-
-Responsabilidad: centralizar toda la configuración de la aplicación usando
-python-dotenv, exponiendo constantes tipadas para el resto de módulos.
+config.py — Carga y gestión de variables de entorno para glpi-voice-bot.
 """
 
 import logging
 import os
+from typing import List
 
 from dotenv import load_dotenv
 
-# Cargar el fichero .env si existe (en producción las vars ya están en el entorno)
+# Cargar el fichero .env si existe (en desarrollo)
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 
-def _require(name: str) -> str:
-    """Devuelve el valor de una variable de entorno obligatoria o lanza un error."""
-    value = os.getenv(name)
-    if not value:
-        raise EnvironmentError(
-            f"Variable de entorno obligatoria no definida: {name}. "
-            "Revisa el fichero .env o las variables del entorno."
-        )
-    return value
-
+def _get_env(name: str, default: str = "") -> str:
+    """Obtiene una variable de entorno de forma segura."""
+    return os.getenv(name, default)
 
 # ── LiveKit ────────────────────────────────────────────────────────────────────
-LIVEKIT_URL: str = _require("LIVEKIT_URL")
-LIVEKIT_API_KEY: str = _require("LIVEKIT_API_KEY")
-LIVEKIT_API_SECRET: str = _require("LIVEKIT_API_SECRET")
+LIVEKIT_URL: str = _get_env("LIVEKIT_URL")
+LIVEKIT_API_KEY: str = _get_env("LIVEKIT_API_KEY")
+LIVEKIT_API_SECRET: str = _get_env("LIVEKIT_API_SECRET")
 
 # ── STT: Deepgram ──────────────────────────────────────────────────────────────
-DEEPGRAM_API_KEY: str = _require("DEEPGRAM_API_KEY")
+DEEPGRAM_API_KEY: str = _get_env("DEEPGRAM_API_KEY")
 
 # ── TTS: Cartesia ──────────────────────────────────────────────────────────────
-CARTESIA_API_KEY: str = _require("CARTESIA_API_KEY")
+CARTESIA_API_KEY: str = _get_env("CARTESIA_API_KEY")
 
 # ── LLM: Groq (compatible OpenAI) ─────────────────────────────────────────────
-GROQ_API_KEY: str = _require("GROQ_API_KEY")
+GROQ_API_KEY: str = _get_env("GROQ_API_KEY")
 
 # ── GLPI REST API ──────────────────────────────────────────────────────────────
-GLPI_URL: str = _require("GLPI_URL")            # http://51.94.34.76/apirest.php
-GLPI_APP_TOKEN: str = _require("GLPI_APP_TOKEN") # App-Token fijo de la instalación
-GLPI_USER_TOKEN: str = _require("GLPI_USER_TOKEN") # Preferencias del usuario → API token
+GLPI_URL: str = _get_env("GLPI_URL")
+GLPI_APP_TOKEN: str = _get_env("GLPI_APP_TOKEN")
+GLPI_USER_TOKEN: str = _get_env("GLPI_USER_TOKEN")
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -51,3 +43,20 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
 )
+
+def validate_config():
+    """
+    Valida que todas las variables de entorno obligatorias estén presentes.
+    Se llama al arrancar el agente, pero no durante el build de Docker.
+    """
+    required = [
+        "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET",
+        "DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "GROQ_API_KEY",
+        "GLPI_URL", "GLPI_APP_TOKEN", "GLPI_USER_TOKEN"
+    ]
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        error_msg = f"Faltan variables de entorno obligatorias: {', '.join(missing)}"
+        logger.error(error_msg)
+        raise EnvironmentError(error_msg)
+    logger.info("Configuración validada correctamente.")
