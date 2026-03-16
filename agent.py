@@ -35,7 +35,8 @@ SYSTEM_PROMPT = (
     "- Habla siempre en español, de forma clara y concisa\n"
     "- Las respuestas deben ser cortas porque el usuario está conduciendo\n"
     "- Cuando el usuario quiera crear un ticket, usa la tool crear_ticket\n"
-    "- Cuando quiera consultar un ticket, usa la tool consultar_ticket\n"
+    "- Cuando quiera consultar un ticket concreto, usa la tool consultar_ticket\n"
+    "- Cuando quiera ver todos sus tickets abiertos, usa la tool consultar_mis_tickets\n"
     "- Si el usuario no especifica la urgencia, asume urgencia normal (3)\n"
     "- Confirma siempre el número de ticket creado al usuario\n"
     "- Al terminar di 'Hasta luego' y llama a la tool finalizar_llamada"
@@ -96,8 +97,13 @@ async def entrypoint(ctx: JobContext) -> None:
         else:
             logger.info("Comercial no encontrado en GLPI para %s; ticket sin asignar.", caller_number)
 
-    # ── 5. Crear instancia de tools con referencia a la Room y transcripción ───
-    tools = GLPITools(glpi_client=glpi, room=ctx.room, transcription=transcription)
+    # ── 5. Crear instancia de tools con referencia a la Room, transcripción y caller ───
+    tools = GLPITools(
+        glpi_client=glpi,
+        room=ctx.room,
+        transcription=transcription,
+        caller_number=caller_number,
+    )
 
     # ── 6. Construir el VoicePipelineAgent ────────────────────────────────────
     agent = VoicePipelineAgent(
@@ -160,6 +166,8 @@ async def entrypoint(ctx: JobContext) -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        # Cerrar sesión GLPI para no dejar sesiones huérfanas
+        await glpi.kill_session()
         # Guardar transcripción completa al colgar
         ruta = await transcription.save_to_file()
         logger.info("Transcripción guardada en: %s", ruta)

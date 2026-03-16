@@ -40,10 +40,9 @@ CARTESIA_API_KEY: str = _require("CARTESIA_API_KEY")
 GROQ_API_KEY: str = _require("GROQ_API_KEY")
 
 # ── GLPI REST API ──────────────────────────────────────────────────────────────
-GLPI_URL: str = _require("GLPI_URL")           # https://tuglpi.empresa.com/apirest.php
-GLPI_APP_TOKEN: str = _require("GLPI_APP_TOKEN")
-GLPI_USER: str = _require("GLPI_USER")
-GLPI_PASS: str = _require("GLPI_PASS")
+GLPI_URL: str = _require("GLPI_URL")            # http://51.94.34.76/apirest.php
+GLPI_APP_TOKEN: str = _require("GLPI_APP_TOKEN") # App-Token fijo de la instalación
+GLPI_USER_TOKEN: str = _require("GLPI_USER_TOKEN") # Preferencias del usuario → API token
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()

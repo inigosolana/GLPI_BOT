@@ -8,6 +8,7 @@ el LLM sepa exactamente qué valor enviar.
 """
 
 import logging
+import re
 from typing import TYPE_CHECKING, Annotated, Optional
 
 from livekit.agents import llm
@@ -29,17 +30,25 @@ class GLPITools(FunctionContext):
     modelo de lenguaje, que decide autónomamente cuándo y cómo invocar cada tool.
     """
 
-    def __init__(self, glpi_client: GLPIClient, room=None, transcription: Optional["CallTranscription"] = None) -> None:
+    def __init__(
+        self,
+        glpi_client: GLPIClient,
+        room=None,
+        transcription: Optional["CallTranscription"] = None,
+        caller_number: str = "desconocido",
+    ) -> None:
         """
         Parámetros:
             glpi_client   — Instancia de GLPIClient ya configurada
             room          — Referencia a la Room de LiveKit para poder desconectarse
             transcription — Instancia de CallTranscription para adjuntar al ticket
+            caller_number — Número de teléfono del llamante (sip.callerId)
         """
         super().__init__()
         self._glpi = glpi_client
         self._room = room
         self._transcription = transcription
+        self._caller_number = caller_number
 
     # ── Tool: crear ticket ─────────────────────────────────────────────────────
 
@@ -92,7 +101,7 @@ class GLPITools(FunctionContext):
             logger.error("Error al crear ticket: %s", exc, exc_info=True)
             return "Error al crear el ticket, inténtelo de nuevo"
 
-    # ── Tool: consultar ticket ─────────────────────────────────────────────────
+    # ── Tool: consultar ticket por ID ──────────────────────────────────────────
 
     @llm.ai_callable(description="Consulta el estado de un ticket existente en GLPI")
     async def consultar_ticket(
@@ -118,6 +127,83 @@ class GLPITools(FunctionContext):
         except Exception as exc:
             logger.warning("Ticket %d no encontrado: %s", ticket_id, exc)
             return f"No encontré el ticket número {ticket_id}"
+
+    # ── Tool: consultar mis tickets abiertos ───────────────────────────────────
+
+    @llm.ai_callable(
+        description="Lista todos los tickets abiertos del comercial que llama"
+    )
+    async def consultar_mis_tickets(self) -> str:
+        """
+        Busca los tickets activos asociados a la entidad del comercial.
+        Para cada ticket obtiene: número, título, estado, técnico asignado
+        y último comentario. Igual que el bot de Telegram.
+        """
+        logger.info("LLM solicita consultar_mis_tickets para %s", self._caller_number)
+        try:
+            # Obtener la entidad GLPI asociada al número del llamante
+            entities_id = await self._glpi.find_entity_by_phone(self._caller_number)
+            if not entities_id:
+                return (
+                    "No encontré su empresa en el sistema. "
+                    "Por favor contacte con soporte para registrarse."
+                )
+
+            tickets = await self._glpi.get_tickets_by_entity(entities_id)
+
+            if not tickets:
+                return "No hay tickets abiertos para su empresa en este momento."
+
+            # Mapeo de estados igual que el bot de Telegram
+            estados = {
+                1: "Nuevo",
+                2: "En curso",
+                3: "Planificado",
+                4: "En espera",
+                5: "Resuelto",
+                6: "Cerrado",
+            }
+
+            resumen = f"Tiene {len(tickets)} tickets abiertos. "
+
+            # Limitar a 5 para no saturar la llamada
+            for t in tickets[:5]:
+                ticket_id = t.get("2")
+                titulo = t.get("1", "Sin título")
+                estado_num = int(t.get("12", 1))
+                tecnico_id = t.get("5", 0)
+
+                estado_texto = estados.get(estado_num, "Desconocido")
+                tecnico_nombre = await self._glpi.get_user_name(
+                    int(tecnico_id) if tecnico_id else 0
+                )
+
+                # Obtener y limpiar el último comentario
+                followups = await self._glpi.get_ticket_followups(int(ticket_id))
+                ultimo_comentario = ""
+                if followups:
+                    raw = followups[0].get("content", "")
+                    # Eliminar etiquetas HTML del comentario
+                    ultimo_comentario = re.sub(r"<[^>]+>", "", raw).strip()
+                    if len(ultimo_comentario) > 100:
+                        ultimo_comentario = ultimo_comentario[:100] + "..."
+
+                resumen += (
+                    f"Ticket {ticket_id}: {titulo}. "
+                    f"Estado: {estado_texto}. "
+                    f"Técnico: {tecnico_nombre}. "
+                )
+                if ultimo_comentario:
+                    resumen += f"Último comentario: {ultimo_comentario}. "
+
+            if len(tickets) > 5:
+                resumen += f"Y {len(tickets) - 5} tickets más."
+
+            return resumen
+
+        except Exception as exc:
+            logger.error("Error en consultar_mis_tickets: %s", exc, exc_info=True)
+            return "Error al consultar los tickets. Inténtelo de nuevo."
 
     # ── Tool: finalizar llamada ────────────────────────────────────────────────
 

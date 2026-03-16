@@ -70,18 +70,21 @@ class GLPIClient:
     def _do_login(self) -> str:
         """
         Realiza el login HTTP de forma síncrona (se llama desde asyncio.to_thread).
+        Usa autenticación por user_token en lugar de usuario+contraseña.
         Devuelve el session_token obtenido.
         """
         url = f"{self._base_url}/initSession"
         response = requests.get(
             url,
-            headers=self._headers_base,
-            auth=(config.GLPI_USER, config.GLPI_PASS),
+            headers={
+                **self._headers_base,
+                "Authorization": f"user_token {config.GLPI_USER_TOKEN}",
+            },
             timeout=10,
         )
         response.raise_for_status()
         token = response.json()["session_token"]
-        logger.info("Sesión GLPI iniciada correctamente.")
+        logger.info("Sesión GLPI iniciada correctamente con user_token.")
         return token
 
     async def _login(self) -> str:
@@ -230,6 +233,113 @@ class GLPIClient:
             logger.warning("No se pudo buscar usuario por teléfono %s: %s", phone, exc)
 
         return None
+
+    # ── Búsqueda por entidad ──────────────────────────────────────────────────
+
+    async def find_entity_by_phone(self, phone: str) -> Optional[int]:
+        """
+        Busca la entities_id de GLPI asociada al número de teléfono del llamante.
+        Primero localiza el usuario por teléfono y luego devuelve su entities_id.
+        """
+        user_id = await self.find_user_by_phone(phone)
+        if not user_id:
+            return None
+        try:
+            data = await self._request("GET", f"/User/{user_id}")
+            entity = data.get("entities_id")
+            logger.info("entities_id=%s para user_id=%d", entity, user_id)
+            return entity
+        except Exception as exc:
+            logger.warning("Error obteniendo entities_id del usuario %d: %s", user_id, exc)
+            return None
+
+    async def get_tickets_by_entity(self, entities_id: int) -> list[dict]:
+        """
+        Busca tickets activos de una entidad GLPI mediante la API de búsqueda.
+        Replica la consulta del workflow n8n:
+          - field=80 (entities_id) equals entities_id
+          - field=12 (status) equals notold (exclye resueltos y cerrados)
+        Devuelve lista de dicts con los campos de cada ticket.
+        """
+        params = (
+            "is_deleted=0&as_map=0"
+            "&criteria[0][field]=80&criteria[0][searchtype]=equals"
+            f"&criteria[0][value]={entities_id}"
+            "&criteria[1][link]=AND&criteria[1][field]=12"
+            "&criteria[1][searchtype]=equals&criteria[1][value]=notold"
+            "&forcedisplay[0]=2&forcedisplay[1]=1&forcedisplay[2]=7"
+            "&forcedisplay[3]=4&forcedisplay[4]=80&forcedisplay[5]=5"
+            "&range=0-50&is_recursive=1"
+        )
+        token = await self._login()
+
+        def _sync() -> requests.Response:
+            return requests.get(
+                f"{self._base_url}/search/Ticket?{params}",
+                headers=self._auth_headers(token),
+                timeout=15,
+            )
+
+        response = await asyncio.to_thread(_sync)
+        response.raise_for_status()
+        data = response.json()
+        tickets = data.get("data", [])
+        logger.info("%d tickets encontrados para entities_id=%d", len(tickets), entities_id)
+        return tickets
+
+    async def get_ticket_followups(self, ticket_id: int) -> list[dict]:
+        """
+        Obtiene los followups (comentarios) de un ticket ordenados por fecha descendente.
+        """
+        try:
+            data = await self._request("GET", f"/Ticket/{ticket_id}/ITILFollowup")
+            if isinstance(data, list):
+                return sorted(data, key=lambda x: x.get("date", ""), reverse=True)
+        except Exception as exc:
+            logger.warning("Error obteniendo followups del ticket %d: %s", ticket_id, exc)
+        return []
+
+    async def get_user_name(self, user_id: int) -> str:
+        """
+        Obtiene el nombre completo de un usuario GLPI por su ID.
+        Devuelve 'Sin asignar' si user_id es 0 o None.
+        """
+        if not user_id or user_id == 0:
+            return "Sin asignar"
+        try:
+            data = await self._request("GET", f"/User/{user_id}")
+            firstname = data.get("firstname", "")
+            realname = data.get("realname", "")
+            nombre = f"{firstname} {realname}".strip()
+            return nombre or f"Técnico ID: {user_id}"
+        except Exception:
+            return f"Técnico ID: {user_id}"
+
+    # ── Gestión de sesión ─────────────────────────────────────────────────────
+
+    async def kill_session(self) -> None:
+        """
+        Cierra la sesión GLPI activa llamando a /killSession.
+        Se llama al finalizar cada llamada telefónica para liberar la sesión.
+        """
+        if not self._session_token:
+            return
+        try:
+            token = self._session_token
+
+            def _sync() -> None:
+                requests.get(
+                    f"{self._base_url}/killSession",
+                    headers=self._auth_headers(token),
+                    timeout=5,
+                )
+
+            await asyncio.to_thread(_sync)
+            self._session_token = None
+            self._session_expires_at = 0.0
+            logger.info("Sesión GLPI cerrada correctamente.")
+        except Exception as exc:
+            logger.warning("Error al cerrar sesión GLPI: %s", exc)
 
     # ── Seguimientos (followups) ───────────────────────────────────────────────
 
