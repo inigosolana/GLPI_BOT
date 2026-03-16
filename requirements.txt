@@ -2,14 +2,15 @@
 # Instalar con: pip install -r requirements.txt
 
 # LiveKit Agents (núcleo)
-# ⚠ Mantener en 0.11.x — la v1.0 tiene una API completamente distinta
-livekit-agents>=0.11,<1.0
+# ⚠ Mantener en 0.12.x — la v1.0 tiene una API completamente distinta
+livekit-agents==0.12.21
 
-# LiveKit Plugins (explicitamente declarados para evitar problemas de ModuleNotFound)
-livekit-plugins-deepgram>=0.11,<1.0
-livekit-plugins-cartesia>=0.11,<1.0
-livekit-plugins-openai>=0.11,<1.0
-livekit-plugins-silero>=0.11,<1.0
+# LiveKit Plugins (explícitamente declarados para evitar problemas de ModuleNotFound)
+# ⚠ Cada plugin tiene su propio esquema de versiones (NO coincide con livekit-agents)
+livekit-plugins-deepgram==0.7.4
+livekit-plugins-cartesia==0.4.12
+livekit-plugins-openai==0.12.4
+livekit-plugins-silero==0.7.6
 
 # Cliente HTTP síncrono (usado con asyncio.to_thread para no bloquear el event loop)
 requests>=2.31
