@@ -1,0 +1,20 @@
+# Entorno virtual
+.venv/
+env/
+venv/
+ENV/
+
+# Variables sensibles
+.env
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDEs
+.vscode/
+.idea/
+
+# LiveKit logs/cache
+*.log

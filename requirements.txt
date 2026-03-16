@@ -1,0 +1,11 @@
+# glpi-voice-bot — dependencias Python
+# Instalar con: pip install -r requirements.txt
+
+# LiveKit Agents con todos los plugins necesarios
+livekit-agents[deepgram,cartesia,openai,silero]>=0.11
+
+# Cliente HTTP síncrono (usado con asyncio.to_thread para no bloquear el event loop)
+requests>=2.31
+
+# Carga de variables de entorno desde .env
+python-dotenv>=1.0
