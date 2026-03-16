@@ -5,8 +5,6 @@ services:
     build: .
     container_name: glpi-voice-bot
     restart: unless-stopped
-    env_file:
-      - .env
     volumes:
       - ./transcripciones:/app/transcripciones
     environment:
