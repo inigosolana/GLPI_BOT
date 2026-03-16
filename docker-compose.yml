@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  glpi-voice-bot:
+    build: .
+    container_name: glpi-voice-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    # El agente necesita conectarse a LiveKit Cloud/Server, por lo que necesita salida a internet
+    network_mode: "host" # Recomendado para evitar problemas con WebRTC/UDP si se corre local
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
