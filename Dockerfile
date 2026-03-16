@@ -6,11 +6,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para audio
+# Instalar dependencias del sistema necesarias para audio y ML
 RUN apt-get update && apt-get install -y \
     gcc \
     libsndfile1 \
     ffmpeg \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar dependencias Python
@@ -21,8 +22,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Descargar modelos necesarios (Silero VAD) en tiempo de build
-# Lo hacemos directamente con python para evitar que el CLI de agent.py intente validar configs
-RUN python -c "from livekit.plugins import silero; silero.VAD.load()"
+# Añadimos '|| true' para que si falla la red en el build, no bloquee el despliegue
+RUN python -c "from livekit.plugins import silero; silero.VAD.load()" || true
 
 # Carpeta para transcripciones (volumen montable)
 RUN mkdir -p /app/transcripciones
