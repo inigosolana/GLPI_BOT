@@ -9,3 +9,6 @@ requests>=2.31
 
 # Carga de variables de entorno desde .env
 python-dotenv>=1.0
+
+# PyAV es necesario para los decodificadores de audio de LiveKit Agents
+av>=12.0.0

@@ -9,8 +9,13 @@ WORKDIR /app
 # Instalar dependencias del sistema necesarias para audio y ML
 RUN apt-get update && apt-get install -y \
     gcc \
+    pkg-config \
     libsndfile1 \
     ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
