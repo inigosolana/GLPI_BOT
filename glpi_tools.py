@@ -170,7 +170,10 @@ class GLPITools(FunctionContext):
         numeros = re.sub(r"\D", "", query)
         letras = re.sub(r"[^a-zA-ZáéíóúÁÉÍÓÚñÑ]", "", query)
         if len(numeros) > 0 and len(numeros) < 9 and len(letras) <= 6:
-            return "Dile al usuario: 'Perdona, el número que he entendido es demasiado corto. Por favor, facilítame tu número de teléfono completando los 9 dígitos para poder identificarte.'"
+            return (
+                f"ERROR: El número '{numeros}' es demasiado corto (solo {len(numeros)} dígitos). "
+                "INSTRUCCIÓN: Pide al usuario que te diga los dígitos que faltan hasta completar los 9. NO busques todavía."
+            )
 
         try:
             users = await self._glpi.search_user(query)

@@ -167,7 +167,7 @@ async def entrypoint(ctx: JobContext) -> None:
             # Parámetros anti-interrupción para telefonía SIP
             interrupt_min_words=2,          # mínimo 2 palabras del usuario para interrumpir
             min_endpointing_delay=1.5,      # dar más tiempo de silencio (1.5s) para que el usuario pueda pensar y dictar los números sin que se corte
-
+            max_nested_fnc_calls=5,         # permitir que el LLM llame a varias tools en cadena si es necesario
         )
 
         # ── 7. Listeners para transcripción en tiempo real ─────────────────────────
