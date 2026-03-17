@@ -113,13 +113,24 @@ async def entrypoint(ctx: JobContext) -> None:
     async with GLPIClient() as glpi:
         requester_id = None
         requester_name: str | None = None
+        entities_id: int | None = None
+
         if caller_number != "desconocido":
             requester_id = await glpi.find_user_by_phone(caller_number)
             if requester_id:
                 requester_name = await glpi.get_user_name(requester_id)
-                logger.info("Comercial identificado en GLPI: user_id=%d, nombre=%s", requester_id, requester_name)
+                entities_id = await glpi.find_entity_by_user_id(requester_id)
+                logger.info(
+                    "Comercial identificado en GLPI: user_id=%d, nombre=%s, entity=%s",
+                    requester_id,
+                    requester_name,
+                    entities_id,
+                )
             else:
-                logger.info("Comercial no encontrado en GLPI para %s; ticket sin asignar.", caller_number)
+                logger.info(
+                    "Comercial no encontrado en GLPI para %s; ticket sin asignar.",
+                    caller_number,
+                )
 
         # ── 5. Crear instancia de tools con referencia a la Room, transcripción y caller ───
         tools = GLPITools(
@@ -128,6 +139,11 @@ async def entrypoint(ctx: JobContext) -> None:
             transcription=transcription,
             caller_number=caller_number,
         )
+        # Inyectar datos iniciales si se han encontrado automáticamente
+        if requester_id:
+            tools.requester_id = requester_id
+            tools.requester_name = requester_name
+            tools.entities_id = entities_id
 
         # ── 6. Construir el VoicePipelineAgent ────────────────────────────────────
         agent = VoicePipelineAgent(
