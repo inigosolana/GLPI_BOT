@@ -31,15 +31,29 @@ ESTADO_MAP: dict[int, str] = {
 }
 
 def normalize_text(text: str) -> str:
-    """Normaliza texto: minúsculas, quita acentos y espacios extra."""
+    """Normaliza texto: minúsculas, quita acentos, eñes y caracteres no alfanuméricos básicos."""
     if not text:
         return ""
     text = text.lower()
-    # Normalizamos a NFD para separar los acentos de las letras (ej: ñ -> n + ~)
+    # Sustitución manual de ñ para asegurar
+    text = text.replace('ñ', 'n')
+    # Normalizamos a NFD para separar marcas de acento
     text = unicodedata.normalize('NFD', text)
-    # Filtramos los caracteres que son marcas de acento
+    # Filtramos los caracteres que son marcas de acento (Mn = Mark, Nonspacing)
     text = "".join([c for c in text if unicodedata.category(c) != 'Mn'])
+    # Eliminar cualquier cosa que no sea letras o números para comparar "sucio"
+    text = re.sub(r'[^a-z0-9]', '', text)
     return text.strip()
+
+def clean_phone(phone: str) -> str:
+    """Extrae exactamente 9 dígitos de una cadena si es posible (formato español)."""
+    nums = re.sub(r'\D', '', phone)
+    if len(nums) > 9 and nums.startswith('34'):
+        nums = nums[2:]
+    if len(nums) > 9:
+        # Si tiene más de 9, nos quedamos con los últimos 9 (asumiendo prefijos invisibles)
+        nums = nums[-9:]
+    return nums
 
 # Tiempo de vida de la sesión en segundos (1 hora)
 SESSION_TTL = 3600
@@ -303,33 +317,41 @@ class GLPIClient:
 
             # 1. Intentar por teléfono si contiene algún dígito
             if any(c.isdigit() for c in clean_query):
-                uid = await self.find_user_by_phone(clean_query)
-                if uid:
-                    nom = await self.get_user_name(uid)
-                    users_found.append({"id": uid, "name": nom})
-                    return users_found
+                phone = clean_phone(clean_query) # Assuming clean_phone is a defined helper function
+                if len(phone) == 9:
+                    uid = await self.find_user_by_phone(phone)
+                    if uid:
+                        nom = await self.get_user_name(uid)
+                        users_found.append({"id": uid, "name": nom})
+                        return users_found
             
             # 2. Intentar buscar por texto global y crudo en campos habituales
+            # Aumentamos el rango para tener más candidatos antes de filtrar
             for field in ["realname", "firstname", "name"]:
-                res = await self._request("GET", "/User", params={f"searchText[{field}]": clean_query, "range": "0-10"})
+                res = await self._request("GET", "/User", params={f"searchText[{field}]": clean_query, "range": "0-30"})
                 if res and isinstance(res, list):
                     for u in res:
                         uid = u.get("id")
                         if uid and not any(x["id"] == uid for x in users_found):
-                            fn = u.get("firstname", "")
-                            rn = u.get("realname", "")
-                            full = f"{fn} {rn}".strip() or u.get("name", "")
+                            fn = str(u.get("firstname") or "")
+                            rn = str(u.get("realname") or "")
+                            full = f"{fn} {rn}".strip() or str(u.get("name") or "")
                             users_found.append({"id": uid, "name": full})
 
-            # 3. Refinar por normalización si hay muchos resultados o buscando asegurar la "ñ"
-            # (El paso 2 ya devolvió algunos, pero si el STT falló con acentos, el searchText de GLPI suele fallar)
+            # 3. FILTRADO POR COINCIDENCIA EXACTA (Normalizada)
+            # Primero intentamos match exacto con el nombre completo
+            exact_matches = [u for u in users_found if normalize_text(str(u["name"])) == norm_query]
+            if exact_matches:
+                return exact_matches[:1] 
             
-            # 4. Si no hay resultados y la query tiene espacios, probar con cada palabra (más de 2 letras)
+            # Si no hay match exacto del nombre completo, quizás solo nos dieron el apellido o nombre
+            # Pero solo filtramos si hay muchos resultados.
+            # Si no hay resultados o no hay exactos, y la query tiene espacios, probar con cada palabra
             if not users_found and " " in clean_query:
                 terminos = [t for t in clean_query.split() if len(t) > 2]
                 for t in terminos:
                     for field in ["firstname", "realname"]:
-                        res = await self._request("GET", "/User", params={f"searchText[{field}]": t, "range": "0-10"})
+                        res = await self._request("GET", "/User", params={f"searchText[{field}]": t, "range": "0-20"})
                         if res and isinstance(res, list):
                             for u in res:
                                 uid = u.get("id")
@@ -339,8 +361,13 @@ class GLPIClient:
                                     full = f"{fn} {rn}".strip() or u.get("name", "")
                                     
                                     # Verificación de "fuzzy match" básico por normalización
-                                    if norm_query in normalize_text(full) or any(normalize_text(t) in normalize_text(full) for t in terminos):
+                                    if norm_query in normalize_text(str(full)) or any(normalize_text(str(tx)) in normalize_text(str(full)) for tx in terminos):
                                         users_found.append({"id": uid, "name": full})
+
+            # Re-comprobar exactos después de búsqueda por términos
+            exact_matches = [u for u in users_found if normalize_text(str(u["name"])) == norm_query]
+            if exact_matches:
+                return exact_matches[:1]
 
             return users_found
         

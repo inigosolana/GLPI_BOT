@@ -189,10 +189,13 @@ class GLPITools(FunctionContext):
                 )
             
             # Múltiples encontrados
-            nombres = ", ".join([u["name"] for u in users[:3]])
-            if len(users) > 3:
+            nombres = " / ".join([u["name"] for u in users[:5]])
+            if len(users) > 5:
                 nombres += " y otros."
-            return f"He encontrado varias posibilidades: {nombres}. Pídele que te especifique el nombre exacto o apellido."
+            return (
+                f"RESULTADO: Se han encontrado varios candidatos ({nombres}). "
+                "INSTRUCCIÓN: Por favor, léelos al usuario pausadamente y pregúntale cuál de ellos es para poder seleccionarlo correctamente."
+            )
             
         except httpx.HTTPStatusError as exc:
             logger.error("Error servidor GLPI buscar usuario: %s", exc)
