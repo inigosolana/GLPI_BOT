@@ -270,6 +270,48 @@ class GLPIClient:
 
         return None
 
+    async def search_user(self, query: str) -> list[dict]:
+        """
+        Busca usuarios en GLPI por teléfono, firstname, o realname.
+        Devuelve una lista de diccionarios con id y name.
+        """
+        users_found = []
+        try:
+            # 1. Intentar por teléfono (limpiando espacios)
+            normalized_query = query.replace(" ", "")
+            if normalized_query.isdigit() or (normalized_query.startswith("+") and normalized_query[1:].isdigit()):
+                uid = await self.find_user_by_phone(normalized_query)
+                if uid:
+                    nom = await self.get_user_name(uid)
+                    users_found.append({"id": uid, "name": nom})
+                    return users_found
+            
+            # 2. Intentar buscar por texto
+            for field in ["realname", "firstname", "name"]:
+                res = await self._request("GET", "/User", params={f"searchText[{field}]": query, "range": "0-5"})
+                if res and isinstance(res, list):
+                    for u in res:
+                        uid = u.get("id")
+                        if uid and not any(x["id"] == uid for x in users_found):
+                            firstname = u.get("firstname", "")
+                            realname = u.get("realname", "")
+                            nombre_completo = f"{firstname} {realname}".strip() or u.get("name", "")
+                            users_found.append({"id": uid, "name": nombre_completo})
+        except Exception as exc:
+            logger.warning("Error buscando usuario via free-text %s: %s", query, exc)
+        
+        return users_found
+
+    async def find_entity_by_user_id(self, user_id: int) -> Optional[int]:
+        """Obtiene el entities_id de un usuario dado su ID interno"""
+        try:
+            data = await self._request("GET", f"/User/{user_id}")
+            entity = data.get("entities_id")
+            return entity
+        except Exception as exc:
+            logger.warning("Error obteniendo entities_id del usuario %d: %s", user_id, exc)
+            return None
+
     # ── Búsqueda por entidad ──────────────────────────────────────────────────
 
     async def find_entity_by_phone(self, phone: str) -> Optional[int]:

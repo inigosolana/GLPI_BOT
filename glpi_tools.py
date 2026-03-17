@@ -51,6 +51,9 @@ class GLPITools(FunctionContext):
         self._transcription = transcription
         self._caller_number = caller_number
         self.ticket_creado_id: Optional[int] = None
+        self.requester_id: Optional[int] = None
+        self.requester_name: Optional[str] = None
+        self.entities_id: Optional[int] = None
 
     # ── Tool: crear ticket ─────────────────────────────────────────────────────
 
@@ -81,10 +84,11 @@ class GLPITools(FunctionContext):
         devuelve una confirmación con el número de ticket generado.
         """
         logger.info(
-            "LLM solicita crear_ticket: titulo='%s' urgencia=%d categoria='%s'",
+            "LLM solicita crear_ticket: titulo='%s' urgencia=%d categoria='%s' requester=%s",
             titulo,
             urgencia,
             categoria,
+            self.requester_id
         )
         try:
             ticket_id = await self._glpi.create_ticket(
@@ -92,6 +96,7 @@ class GLPITools(FunctionContext):
                 description=descripcion,
                 urgency=urgencia,
                 category=categoria,
+                requester_id=self.requester_id,
             )
             self.ticket_creado_id = ticket_id
             resultado = f"Ticket {ticket_id} creado correctamente"
@@ -142,6 +147,54 @@ class GLPITools(FunctionContext):
             logger.warning("Ticket %d no encontrado o fallo impredecible: %s", ticket_id, exc)
             return f"No encontré el ticket número {ticket_id}"
 
+    # ── Tool: identificar usuario ──────────────────────────────────────────────
+
+    @llm.ai_callable(description="Busca y valida la identidad del usuario en GLPI por nombre o teléfono")
+    async def identificar_usuario(
+        self,
+        query: Annotated[
+            str,
+            llm.TypeInfo(description="Nombre, apellidos o número de teléfono del usuario a buscar"),
+        ],
+    ) -> str:
+        """
+        Busca al usuario en GLPI. Si lo encuentra, lo asocia a la llamada de modo que
+        sus tickets posteriores y consultas apliquen sobre él.
+        Úsalo cuando el sistema no reconozca el teléfono o cuando necesites confirmar la identidad.
+        """
+        logger.info("LLM solicita identificar_usuario con query='%s'", query)
+        try:
+            users = await self._glpi.search_user(query)
+            if not users:
+                return f"No he encontrado a nadie en el sistema con el texto '{query}'. Por favor, pídele que te dé otro nombre o teléfono."
+            
+            if len(users) == 1:
+                u = users[0]
+                self.requester_id = u["id"]
+                self.requester_name = u["name"]
+                self.entities_id = await self._glpi.find_entity_by_user_id(u["id"])
+                
+                return (
+                    f"He encontrado a '{self.requester_name}'. "
+                    "Ya le he identificado en el sistema. Pregúntale qué desea hacer ahora."
+                )
+            
+            # Múltiples encontrados
+            nombres = ", ".join([u["name"] for u in users[:3]])
+            if len(users) > 3:
+                nombres += " y otros."
+            return f"He encontrado varias posibilidades: {nombres}. Pídele que te especifique el nombre exacto o apellido."
+            
+        except httpx.HTTPStatusError as exc:
+            logger.error("Error servidor GLPI buscar usuario: %s", exc)
+            return "El servidor de GLPI está fallando, no pude buscar el usuario."
+        except httpx.RequestError as exc:
+            logger.error("Error red buscar usuario: %s", exc)
+            return "No pude conectar con GLPI para buscar el usuario."
+        except Exception as exc:
+            logger.error("Error inesperado en buscar usuario: %s", exc)
+            return "Error interno buscando el usuario."
+
     # ── Tool: consultar mis tickets abiertos ───────────────────────────────────
 
     @llm.ai_callable(
@@ -153,14 +206,17 @@ class GLPITools(FunctionContext):
         Para cada ticket obtiene: número, título, estado, técnico asignado
         y último comentario. Igual que el bot de Telegram.
         """
-        logger.info("LLM solicita consultar_mis_tickets para %s", self._caller_number)
+        logger.info("LLM solicita consultar_mis_tickets para caller=%s (requester_id=%s)", self._caller_number, self.requester_id)
         try:
-            # Obtener la entidad GLPI asociada al número del llamante
-            entities_id = await self._glpi.find_entity_by_phone(self._caller_number)
+            # Seleccionar entity_id en base a si hemos identificado explícitamente al usuario, o tirar de la fallback_phone
+            entities_id = self.entities_id
+            if not entities_id:
+                entities_id = await self._glpi.find_entity_by_phone(self._caller_number)
+                
             if not entities_id:
                 return (
-                    "No encontré su empresa en el sistema. "
-                    "Por favor contacte con soporte para registrarse."
+                    "No conozco para qué empresa trabajas porque aún no te he identificado en el sistema. "
+                    "Te recomiendo validarte antes diciendo tu nombre completo."
                 )
 
             tickets = await self._glpi.get_tickets_by_entity(entities_id)
