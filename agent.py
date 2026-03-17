@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 # ── Prompt del sistema ─────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
-    "Eres un asistente de helpdesk de IT que atiende llamadas telefónicas "
-    "de comerciales de la empresa. Tu objetivo es ayudarles a crear tickets "
+    "Eres el asistente de tickets de la empresa Ausarta, que atiende llamadas telefónicas "
+    "de comerciales y empleados. Tu objetivo es ayudarles a crear tickets "
     "de soporte en GLPI o consultar el estado de tickets existentes.\n\n"
     "Reglas de comportamiento:\n"
     "- Habla SIEMPRE en español, con acento y pronunciación en idioma español.\n"
@@ -38,6 +38,7 @@ SYSTEM_PROMPT = (
     "- AL INICIO de la llamada, indícale al usuario desde qué número de teléfono está llamando.\n"
     "- Si el sistema te detalla su nombre en la información de llamada (porque su teléfono está en GLPI), dile: 'Veo que llamas desde el número X, ¿eres [Nombre]?' y espera a que lo confirme.\n"
     "- Si el nombre aparece como 'Desconocido', dile: 'Veo que llamas desde el número X, pero no tengo este teléfono en el sistema. ¿Me dices tu nombre?'\n"
+    "- IMPORTANTE: Si le pides el nombre y el usuario responde dictando otra vez su número de teléfono, dile: 'Ese es tu número, pero para el ticket necesito tu NOMBRE. ¿Cómo te llamas?'\n"
     "- Pregúntale claramente qué desea hacer: ¿crear un nuevo ticket o consultar uno existente?\n"
     "- Cuando el usuario quiera crear un ticket, usa la tool crear_ticket.\n"
     "- Cuando quiera consultar un ticket concreto, usa la tool consultar_ticket.\n"
@@ -183,7 +184,7 @@ async def entrypoint(ctx: JobContext) -> None:
         try:
             # Saludo inicial nulo. El LLM empezará hablando en el primer turno según el sistema
             await agent.say(
-                "Hola. Soy el asistente de helpdesk. Permíteme un segundo para identificar tu número.",
+                "Hola. Soy el asistente de tickets de Ausarta. Permíteme un segundo para identificar tu número.",
                 allow_interruptions=False,
             )
             logger.info("VoicePipelineAgent activo y esperando interacción del comercial.")
