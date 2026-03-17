@@ -405,20 +405,27 @@ class GLPIClient:
             logger.warning("Error obteniendo entities_id del usuario %d: %s", user_id, exc)
             return None
 
-    async def get_tickets_by_entity(self, entities_id: int) -> list[dict]:
+    async def get_tickets_by_user(self, user_id: int) -> list[dict]:
         """
-        Busca tickets activos de una entidad GLPI mediante la API de búsqueda.
-        Replica la consulta del workflow n8n:
-          - field=80 (entities_id) equals entities_id
-          - field=12 (status) equals notold (exclye resueltos y cerrados)
+        Busca tickets activos donde el usuario es SOLICITANTE (field=4) o
+        TÉCNICO ASIGNADO (field=5).
+        Se usa lógica OR entre ambos criterios y AND con estado 'notold'
+        (excluye resueltos y cerrados).
         Devuelve lista de dicts con los campos de cada ticket.
         """
         params = (
             "is_deleted=0&as_map=0"
-            "&criteria[0][field]=80&criteria[0][searchtype]=equals"
-            f"&criteria[0][value]={entities_id}"
+            # Grupo OR: solicitante o técnico
+            "&criteria[0][link]=AND"
+            "&criteria[0][criteria][0][field]=4&criteria[0][criteria][0][searchtype]=equals"
+            f"&criteria[0][criteria][0][value]={user_id}"
+            "&criteria[0][criteria][1][link]=OR"
+            "&criteria[0][criteria][1][field]=5&criteria[0][criteria][1][searchtype]=equals"
+            f"&criteria[0][criteria][1][value]={user_id}"
+            # AND estado no resuelto/cerrado
             "&criteria[1][link]=AND&criteria[1][field]=12"
             "&criteria[1][searchtype]=equals&criteria[1][value]=notold"
+            # Campos a mostrar
             "&forcedisplay[0]=2&forcedisplay[1]=1&forcedisplay[2]=7"
             "&forcedisplay[3]=4&forcedisplay[4]=80&forcedisplay[5]=5"
             "&range=0-50&is_recursive=1"
@@ -433,7 +440,7 @@ class GLPIClient:
         response.raise_for_status()
         data = response.json()
         tickets = data.get("data", [])
-        logger.info("%d tickets encontrados para entities_id=%d", len(tickets), entities_id)
+        logger.info("%d tickets encontrados para user_id=%d (como solicitante o técnico)", len(tickets), user_id)
         return tickets
 
     async def get_ticket_followups(self, ticket_id: int) -> list[dict]:

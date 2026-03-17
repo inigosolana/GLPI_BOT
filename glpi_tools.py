@@ -221,25 +221,19 @@ class GLPITools(FunctionContext):
         Para cada ticket obtiene: número, título, estado, técnico asignado
         y último comentario. Igual que el bot de Telegram.
         """
-        logger.info("LLM solicita consultar_mis_tickets para caller=%s (requester_id=%s, entities_id=%s)", self._caller_number, self.requester_id, self.entities_id)
+        logger.info("LLM solicita consultar_mis_tickets para caller=%s (requester_id=%s)", self._caller_number, self.requester_id)
         try:
-            # Seleccionar entity_id en base a si hemos identificado explícitamente al usuario, o tirar de la fallback_phone
-            # IMPORTANTE: entities_id=0 es la entidad raíz de GLPI, es un valor VÁLIDO.
-            # Usar 'is None' en lugar de 'if not' para no tratar 0 como falso.
-            entities_id = self.entities_id
-            if entities_id is None:
-                entities_id = await self._glpi.find_entity_by_phone(self._caller_number)
-                
-            if entities_id is None:
+            # Buscar tickets donde el usuario es SOLICITANTE o TÉCNICO ASIGNADO
+            if self.requester_id is None:
                 return (
-                    "No conozco para qué empresa trabajas porque aún no te he identificado en el sistema. "
-                    "Te recomiendo validarte antes diciendo tu nombre completo."
+                    "No te he identificado todavía en el sistema. "
+                    "Dime tu nombre completo o tu número de teléfono para buscarte."
                 )
 
-            tickets = await self._glpi.get_tickets_by_entity(entities_id)
+            tickets = await self._glpi.get_tickets_by_user(self.requester_id)
 
             if not tickets:
-                return "No hay tickets abiertos para su empresa en este momento."
+                return "No tienes tickets abiertos en este momento, ni como solicitante ni como técnico asignado."
 
             # Mapeo de estados igual que el bot de Telegram
             estados = {
