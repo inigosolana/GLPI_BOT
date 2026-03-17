@@ -246,49 +246,58 @@ class GLPIClient:
         Busca un usuario GLPI cuyo campo 'mobile' o 'phone' coincide con el número.
         Devuelve el ID interno de GLPI o None si no se encuentra.
         """
-        # Normalizar: quitar espacios y el prefijo internacional +34
-        normalized = phone.strip().lstrip("+").lstrip("34")
+        # Limpiar posibles caracteres extraños
+        clean_phone = phone.replace(" ", "").replace("+", "").replace("-", "").replace(".", "")
+        if clean_phone.startswith("34"):
+            clean_phone = clean_phone[2:]
+            
+        # Variantes a comprobar para cubrir todos los formatos de almacenamiento en GLPI
+        variants = list(set([phone.strip(), clean_phone, f"+34 {clean_phone}"]))
 
-        try:
-            users = await self._request(
-                "GET",
-                "/User",
-                params={
-                    "searchText[mobile]": normalized,
-                    "range": "0-1",
-                    "forcedisplay[0]": "1",   # id
-                    "forcedisplay[1]": "3",   # nombre
-                    "forcedisplay[2]": "11",  # móvil
-                },
-            )
-            if users and isinstance(users, list):
-                user_id: int = users[0]["id"]
-                logger.info("Usuario GLPI encontrado: id=%d para teléfono %s", user_id, phone)
-                return user_id
-        except Exception as exc:
-            logger.warning("No se pudo buscar usuario por teléfono %s: %s", phone, exc)
-
+        for variant in variants:
+            if not variant:
+                continue
+            for field in ["mobile", "phone"]:
+                try:
+                    users = await self._request(
+                        "GET",
+                        "/User",
+                        params={
+                            f"searchText[{field}]": variant,
+                            "range": "0-1",
+                            "forcedisplay[0]": "1",
+                            "forcedisplay[1]": "3",
+                        },
+                    )
+                    if users and isinstance(users, list):
+                        user_id: int = users[0]["id"]
+                        logger.info("Usuario GLPI encontrado: id=%d buscando por [%s]='%s'", user_id, field, variant)
+                        return user_id
+                except Exception as exc:
+                    pass
         return None
 
     async def search_user(self, query: str) -> list[dict]:
         """
-        Busca usuarios en GLPI por teléfono, firstname, o realname.
+        Busca usuarios en GLPI por teléfono, firstname, o realname, siendo muy flexible.
         Devuelve una lista de diccionarios con id y name.
         """
         users_found = []
         try:
-            # 1. Intentar por teléfono (limpiando espacios)
-            normalized_query = query.replace(" ", "")
-            if normalized_query.isdigit() or (normalized_query.startswith("+") and normalized_query[1:].isdigit()):
-                uid = await self.find_user_by_phone(normalized_query)
+            # Eliminar punto final del STT si existe
+            clean_query = query.rstrip(".").strip()
+
+            # 1. Intentar por teléfono si contiene algún dígito
+            if any(c.isdigit() for c in clean_query):
+                uid = await self.find_user_by_phone(clean_query)
                 if uid:
                     nom = await self.get_user_name(uid)
                     users_found.append({"id": uid, "name": nom})
                     return users_found
             
-            # 2. Intentar buscar por texto
+            # 2. Intentar buscar por texto global y crudo
             for field in ["realname", "firstname", "name"]:
-                res = await self._request("GET", "/User", params={f"searchText[{field}]": query, "range": "0-5"})
+                res = await self._request("GET", "/User", params={f"searchText[{field}]": clean_query, "range": "0-5"})
                 if res and isinstance(res, list):
                     for u in res:
                         uid = u.get("id")
@@ -297,6 +306,21 @@ class GLPIClient:
                             realname = u.get("realname", "")
                             nombre_completo = f"{firstname} {realname}".strip() or u.get("name", "")
                             users_found.append({"id": uid, "name": nombre_completo})
+
+            # 3. Si la búsqueda conjunta falló y hay espacios (ej. "Iñigo Solana") buscaremos por la primera palabra
+            if not users_found and " " in clean_query:
+                primer_termino = clean_query.split()[0]
+                for field in ["firstname", "name"]:
+                    res = await self._request("GET", "/User", params={f"searchText[{field}]": primer_termino, "range": "0-5"})
+                    if res and isinstance(res, list):
+                        for u in res:
+                            uid = u.get("id")
+                            if uid and not any(x["id"] == uid for x in users_found):
+                                firstname = u.get("firstname", "")
+                                realname = u.get("realname", "")
+                                nombre_completo = f"{firstname} {realname}".strip() or u.get("name", "")
+                                users_found.append({"id": uid, "name": nombre_completo})
+        
         except Exception as exc:
             logger.warning("Error buscando usuario via free-text %s: %s", query, exc)
         
