@@ -10,6 +10,8 @@ el event loop de LiveKit Agents.
 import asyncio
 import logging
 import time
+import unicodedata
+import re
 from typing import Any, Optional
 
 import httpx
@@ -27,6 +29,17 @@ ESTADO_MAP: dict[int, str] = {
     5: "resuelto",
     6: "cerrado",
 }
+
+def normalize_text(text: str) -> str:
+    """Normaliza texto: minúsculas, quita acentos y espacios extra."""
+    if not text:
+        return ""
+    text = text.lower()
+    # Normalizamos a NFD para separar los acentos de las letras (ej: ñ -> n + ~)
+    text = unicodedata.normalize('NFD', text)
+    # Filtramos los caracteres que son marcas de acento
+    text = "".join([c for c in text if unicodedata.category(c) != 'Mn'])
+    return text.strip()
 
 # Tiempo de vida de la sesión en segundos (1 hora)
 SESSION_TTL = 3600
@@ -280,12 +293,13 @@ class GLPIClient:
     async def search_user(self, query: str) -> list[dict]:
         """
         Busca usuarios en GLPI por teléfono, firstname, o realname, siendo muy flexible.
-        Devuelve una lista de diccionarios con id y name.
+        Incluye normalización de acentos y búsqueda por términos.
         """
         users_found = []
         try:
             # Eliminar punto final del STT si existe
             clean_query = query.rstrip(".").strip()
+            norm_query = normalize_text(clean_query)
 
             # 1. Intentar por teléfono si contiene algún dígito
             if any(c.isdigit() for c in clean_query):
@@ -295,31 +309,40 @@ class GLPIClient:
                     users_found.append({"id": uid, "name": nom})
                     return users_found
             
-            # 2. Intentar buscar por texto global y crudo
+            # 2. Intentar buscar por texto global y crudo en campos habituales
             for field in ["realname", "firstname", "name"]:
-                res = await self._request("GET", "/User", params={f"searchText[{field}]": clean_query, "range": "0-5"})
+                res = await self._request("GET", "/User", params={f"searchText[{field}]": clean_query, "range": "0-10"})
                 if res and isinstance(res, list):
                     for u in res:
                         uid = u.get("id")
                         if uid and not any(x["id"] == uid for x in users_found):
-                            firstname = u.get("firstname", "")
-                            realname = u.get("realname", "")
-                            nombre_completo = f"{firstname} {realname}".strip() or u.get("name", "")
-                            users_found.append({"id": uid, "name": nombre_completo})
+                            fn = u.get("firstname", "")
+                            rn = u.get("realname", "")
+                            full = f"{fn} {rn}".strip() or u.get("name", "")
+                            users_found.append({"id": uid, "name": full})
 
-            # 3. Si la búsqueda conjunta falló y hay espacios (ej. "Iñigo Solana") buscaremos por la primera palabra
+            # 3. Refinar por normalización si hay muchos resultados o buscando asegurar la "ñ"
+            # (El paso 2 ya devolvió algunos, pero si el STT falló con acentos, el searchText de GLPI suele fallar)
+            
+            # 4. Si no hay resultados y la query tiene espacios, probar con cada palabra (más de 2 letras)
             if not users_found and " " in clean_query:
-                primer_termino = clean_query.split()[0]
-                for field in ["firstname", "name"]:
-                    res = await self._request("GET", "/User", params={f"searchText[{field}]": primer_termino, "range": "0-5"})
-                    if res and isinstance(res, list):
-                        for u in res:
-                            uid = u.get("id")
-                            if uid and not any(x["id"] == uid for x in users_found):
-                                firstname = u.get("firstname", "")
-                                realname = u.get("realname", "")
-                                nombre_completo = f"{firstname} {realname}".strip() or u.get("name", "")
-                                users_found.append({"id": uid, "name": nombre_completo})
+                terminos = [t for t in clean_query.split() if len(t) > 2]
+                for t in terminos:
+                    for field in ["firstname", "realname"]:
+                        res = await self._request("GET", "/User", params={f"searchText[{field}]": t, "range": "0-10"})
+                        if res and isinstance(res, list):
+                            for u in res:
+                                uid = u.get("id")
+                                if uid and not any(x["id"] == uid for x in users_found):
+                                    fn = u.get("firstname", "")
+                                    rn = u.get("realname", "")
+                                    full = f"{fn} {rn}".strip() or u.get("name", "")
+                                    
+                                    # Verificación de "fuzzy match" básico por normalización
+                                    if norm_query in normalize_text(full) or any(normalize_text(t) in normalize_text(full) for t in terminos):
+                                        users_found.append({"id": uid, "name": full})
+
+            return users_found
         
         except Exception as exc:
             logger.warning("Error buscando usuario via free-text %s: %s", query, exc)
