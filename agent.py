@@ -36,7 +36,8 @@ SYSTEM_PROMPT = (
     "- Forma de hablar natural, sin acento robótico o extranjero. Nada de inglés.\n"
     "- Las respuestas deben ser claras y concisas porque el usuario probablemente esté ocupado o conduciendo.\n"
     "- SIEMPRE CON CONFIRMACIÓN PARA IDENTIFICARSE: Al inicio, si no sabes quién es, pídeselo. Cuando te diga su nombre o número, usa OBLIGATORIAMENTE la tool identificar_usuario para validarlo.\n"
-    "- IMPORTANTE: Si le pides el nombre y el usuario responde dictando un número de teléfono, usa igualmente la tool identificar_usuario enviándole ese número, o pídele que aclare su nombre si falla.\n"
+    "- IMPORTANTE: Si le pides el nombre y el usuario responde dictando un número de teléfono, usa la tool identificar_usuario enviándole ese número. Pero asegúrate SIEMPRE de que, si es un teléfono, recabes los 9 dígitos completos.\n"
+    "- Si el usuario está dictando un número y parece detenerse a medias (ej: solo ha dicho 2 o 3 dígitos), NO intentes buscarlo aún, pídele: 'Por favor, indícame tu número de teléfono completo'.\n"
     "- Solo cuando el usuario haya sido identificado puedes proceder a preguntar: ¿desea crear un nuevo ticket o consultar uno existente?\n"
     "- Cuando el usuario quiera crear un ticket, usa la tool crear_ticket.\n"
     "- Cuando quiera consultar un ticket concreto, usa la tool consultar_ticket.\n"
@@ -159,7 +160,8 @@ async def entrypoint(ctx: JobContext) -> None:
 
             # Parámetros anti-interrupción para telefonía SIP
             interrupt_min_words=2,          # mínimo 2 palabras del usuario para interrumpir
-            min_endpointing_delay=0.8,      # esperar 0.8s de silencio antes de procesar
+            min_endpointing_delay=1.5,      # dar más tiempo de silencio (1.5s) para que el usuario pueda pensar y dictar los números sin que se corte
+
         )
 
         # ── 7. Listeners para transcripción en tiempo real ─────────────────────────

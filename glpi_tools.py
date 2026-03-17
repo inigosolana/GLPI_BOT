@@ -163,6 +163,15 @@ class GLPITools(FunctionContext):
         Úsalo cuando el sistema no reconozca el teléfono o cuando necesites confirmar la identidad.
         """
         logger.info("LLM solicita identificar_usuario con query='%s'", query)
+
+        # Validación para evitar procesar números de teléfono muy cortos
+        # Si el query contiene una cantidad significativa de números pero menos de 9
+        # y pocas letras, asumimos que es un número de teléfono a medias dictado con pausas.
+        numeros = re.sub(r"\D", "", query)
+        letras = re.sub(r"[^a-zA-ZáéíóúÁÉÍÓÚñÑ]", "", query)
+        if len(numeros) > 0 and len(numeros) < 9 and len(letras) <= 6:
+            return "Dile al usuario: 'Perdona, el número que he entendido es demasiado corto. Por favor, facilítame tu número de teléfono completando los 9 dígitos para poder identificarte.'"
+
         try:
             users = await self._glpi.search_user(query)
             if not users:
