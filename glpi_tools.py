@@ -11,6 +11,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Annotated, Optional
 
+import httpx
 from livekit.agents import llm
 from livekit.agents.llm import FunctionContext
 
@@ -49,6 +50,7 @@ class GLPITools(FunctionContext):
         self._room = room
         self._transcription = transcription
         self._caller_number = caller_number
+        self.ticket_creado_id: Optional[int] = None
 
     # ── Tool: crear ticket ─────────────────────────────────────────────────────
 
@@ -91,15 +93,19 @@ class GLPITools(FunctionContext):
                 urgency=urgencia,
                 category=categoria,
             )
+            self.ticket_creado_id = ticket_id
             resultado = f"Ticket {ticket_id} creado correctamente"
             logger.info(resultado)
-            # Adjuntar la transcripción de la llamada al ticket si está disponible
-            if self._transcription is not None:
-                await self._transcription.save_to_glpi(self._glpi, ticket_id)
             return resultado
+        except httpx.HTTPStatusError as exc:
+            logger.error("Error del servidor GLPI al crear ticket: %s", exc, exc_info=True)
+            return "Error del servidor al crear el ticket. Es posible que el servicio esté interrumpido."
+        except httpx.RequestError as exc:
+            logger.error("Error de red al crear ticket: %s", exc, exc_info=True)
+            return "No se pudo conectar con el servidor para crear el ticket."
         except Exception as exc:
-            logger.error("Error al crear ticket: %s", exc, exc_info=True)
-            return "Error al crear el ticket, inténtelo de nuevo"
+            logger.error("Error inesperado al crear ticket: %s", exc, exc_info=True)
+            return "Hubo un error inesperado al intentar crear el ticket. Inténtelo más tarde."
 
     # ── Tool: consultar ticket por ID ──────────────────────────────────────────
 
@@ -124,8 +130,16 @@ class GLPITools(FunctionContext):
             )
             logger.info(resultado)
             return resultado
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return f"El ticket número {ticket_id} no existe en el sistema."
+            logger.warning("Error del servidor al consultar ticket %d: %s", ticket_id, exc)
+            return f"Hubo un fallo del servidor al consultar el ticket {ticket_id}."
+        except httpx.RequestError as exc:
+            logger.warning("Error de conectividad al consultar ticket %d: %s", ticket_id, exc)
+            return "Fallo de comunicación con GLPI. No pude consultar el ticket."
         except Exception as exc:
-            logger.warning("Ticket %d no encontrado: %s", ticket_id, exc)
+            logger.warning("Ticket %d no encontrado o fallo impredecible: %s", ticket_id, exc)
             return f"No encontré el ticket número {ticket_id}"
 
     # ── Tool: consultar mis tickets abiertos ───────────────────────────────────
@@ -201,6 +215,12 @@ class GLPITools(FunctionContext):
 
             return resumen
 
+        except httpx.HTTPStatusError as exc:
+            logger.error("Error de servidor en consultar_mis_tickets: %s", exc, exc_info=True)
+            return "El servidor de GLPI ha rechazado la consulta. Inténtelo más tarde."
+        except httpx.RequestError as exc:
+            logger.error("Error de red en consultar_mis_tickets: %s", exc, exc_info=True)
+            return "Fallo de conexión con GLPI al intentar consultar sus tickets abiertos."
         except Exception as exc:
             logger.error("Error en consultar_mis_tickets: %s", exc, exc_info=True)
             return "Error al consultar los tickets. Inténtelo de nuevo."

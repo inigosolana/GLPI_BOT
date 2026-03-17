@@ -10,23 +10,13 @@ el event loop de LiveKit Agents.
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
-import requests
+import httpx
 
 import config
 
 logger = logging.getLogger(__name__)
-
-# Mapeo de nombres de categoría (legible) a itilcategories_id de GLPI.
-# Ajusta los IDs según tu instancia de GLPI.
-CATEGORY_MAP: dict[str, int] = {
-    "hardware": 1,
-    "software": 2,
-    "red": 3,
-    "impresora": 4,
-    "otro": 0,   # 0 = sin categoría
-}
 
 # Mapeo de estado numérico GLPI a texto legible en español
 ESTADO_MAP: dict[int, str] = {
@@ -60,6 +50,55 @@ class GLPIClient:
             "App-Token": config.GLPI_APP_TOKEN,
             "Content-Type": "application/json",
         }
+        self._client = httpx.AsyncClient(timeout=15.0)
+        self._CATEGORY_MAP: dict[str, int] = {}
+        self._categories_loaded: bool = False
+
+    async def __aenter__(self):
+        await self.load_categories()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._session_token:
+            await self.kill_session()
+        await self._client.aclose()
+
+    async def get_categories(self) -> list[str]:
+        """Devuelve los nombres de las categorías cargadas"""
+        await self.load_categories()
+        return list(self._CATEGORY_MAP.keys())
+
+    async def load_categories(self) -> None:
+        if self._categories_loaded:
+            return
+        try:
+            categories = await self._request("GET", "/ITILCategory", params={"range": "0-100", "is_deleted": "0"})
+            if isinstance(categories, list):
+                mapping = {}
+                for cat in categories:
+                    name = cat.get("name", "").lower()
+                    cat_id = cat.get("id")
+                    if name and cat_id is not None:
+                        mapping[name] = cat_id
+                
+                # Fallback mapping options
+                if "hardware" not in mapping: mapping["hardware"] = 1
+                if "software" not in mapping: mapping["software"] = 2
+                if "red" not in mapping: mapping["red"] = 3
+                if "impresora" not in mapping: mapping["impresora"] = 4
+                mapping["otro"] = 0
+                self._CATEGORY_MAP = mapping
+                self._categories_loaded = True
+                logger.info("Categorías GLPI cargadas: %d encontradas", len(mapping))
+        except Exception as exc:
+            logger.warning("Error al cargar categorías ITIL, usando defaults. %s", exc)
+            self._CATEGORY_MAP = {
+                "hardware": 1,
+                "software": 2,
+                "red": 3,
+                "impresora": 4,
+                "otro": 0,
+            }
 
     # ── Autenticación ──────────────────────────────────────────────────────────
 
@@ -67,20 +106,19 @@ class GLPIClient:
         """Comprueba si el token de sesión actual sigue siendo válido."""
         return bool(self._session_token) and time.time() < self._session_expires_at
 
-    def _do_login(self) -> str:
+    async def _do_login(self) -> str:
         """
-        Realiza el login HTTP de forma síncrona (se llama desde asyncio.to_thread).
+        Realiza el login HTTP de forma asíncrona nativa.
         Usa autenticación por user_token en lugar de usuario+contraseña.
         Devuelve el session_token obtenido.
         """
         url = f"{self._base_url}/initSession"
-        response = requests.get(
+        response = await self._client.get(
             url,
             headers={
                 **self._headers_base,
                 "Authorization": f"user_token {config.GLPI_USER_TOKEN}",
             },
-            timeout=10,
         )
         response.raise_for_status()
         token = response.json()["session_token"]
@@ -95,7 +133,7 @@ class GLPIClient:
         if self._is_session_valid():
             return self._session_token  # type: ignore[return-value]
 
-        token = await asyncio.to_thread(self._do_login)
+        token = await self._do_login()
         self._session_token = token
         self._session_expires_at = time.time() + SESSION_TTL
         return token
@@ -112,24 +150,21 @@ class GLPIClient:
         json: Optional[dict] = None,
         params: Optional[dict] = None,
         retry: bool = True,
-    ) -> dict:
+    ) -> Any:
         """
         Realiza una petición autenticada a la API de GLPI.
         Si devuelve 401 y retry=True, hace re-login y reintenta una vez.
         """
         token = await self._login()
 
-        def _sync_request() -> requests.Response:
-            return requests.request(
-                method,
-                f"{self._base_url}{path}",
-                headers=self._auth_headers(token),
-                json=json,
-                params=params,
-                timeout=15,
-            )
-
-        response = await asyncio.to_thread(_sync_request)
+        url = f"{self._base_url}{path}"
+        response = await self._client.request(
+            method,
+            url,
+            headers=self._auth_headers(token),
+            json=json,
+            params=params,
+        )
 
         # Re-login automático en caso de sesión expirada en el servidor
         if response.status_code == 401 and retry:
@@ -161,7 +196,8 @@ class GLPIClient:
             category      — Nombre de categoría: hardware, software, red, impresora, otro
             requester_id  — ID interno GLPI del usuario solicitante (opcional)
         """
-        category_id = CATEGORY_MAP.get(category.lower(), 0)
+        await self.load_categories()
+        category_id = self._CATEGORY_MAP.get(category.lower(), 0)
 
         payload: dict = {
             "input": {
@@ -273,14 +309,11 @@ class GLPIClient:
         )
         token = await self._login()
 
-        def _sync() -> requests.Response:
-            return requests.get(
-                f"{self._base_url}/search/Ticket?{params}",
-                headers=self._auth_headers(token),
-                timeout=15,
-            )
+        response = await self._client.get(
+            f"{self._base_url}/search/Ticket?{params}",
+            headers=self._auth_headers(token),
+        )
 
-        response = await asyncio.to_thread(_sync)
         response.raise_for_status()
         data = response.json()
         tickets = data.get("data", [])
@@ -320,21 +353,18 @@ class GLPIClient:
     async def kill_session(self) -> None:
         """
         Cierra la sesión GLPI activa llamando a /killSession.
-        Se llama al finalizar cada llamada telefónica para liberar la sesión.
+        Se llama al final de context manager.
         """
         if not self._session_token:
             return
         try:
             token = self._session_token
 
-            def _sync() -> None:
-                requests.get(
-                    f"{self._base_url}/killSession",
-                    headers=self._auth_headers(token),
-                    timeout=5,
-                )
+            await self._client.get(
+                f"{self._base_url}/killSession",
+                headers=self._auth_headers(token),
+            )
 
-            await asyncio.to_thread(_sync)
             self._session_token = None
             self._session_expires_at = 0.0
             logger.info("Sesión GLPI cerrada correctamente.")

@@ -12,8 +12,8 @@ livekit-plugins-cartesia==0.4.12
 livekit-plugins-openai==0.12.4
 livekit-plugins-silero==0.7.6
 
-# Cliente HTTP síncrono (usado con asyncio.to_thread para no bloquear el event loop)
-requests>=2.31
+# Cliente HTTP asíncrono
+httpx>=0.25.0
 
 # Carga de variables de entorno desde .env
 python-dotenv>=1.0

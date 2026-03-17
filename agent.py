@@ -35,8 +35,9 @@ SYSTEM_PROMPT = (
     "- Habla SIEMPRE en español, con acento y pronunciación en idioma español.\n"
     "- Forma de hablar natural, sin acento robótico o extranjero. Nada de inglés.\n"
     "- Las respuestas deben ser claras y concisas porque el usuario probablemente esté ocupado o conduciendo.\n"
-    "- Identifica a qué persona pertenece el teléfono que llama (lo verás en el contexto). Si lo sabes, salúdale por su nombre.\n"
-    "- Si no lo sabes, dile de qué número llama y pídele que se identifique.\n"
+    "- AL INICIO de la llamada, indícale al usuario desde qué número de teléfono está llamando.\n"
+    "- Si el sistema te detalla su nombre en la información de llamada (porque su teléfono está en GLPI), dile: 'Veo que llamas desde el número X, ¿eres [Nombre]?' y espera a que lo confirme.\n"
+    "- Si el nombre aparece como 'Desconocido', dile: 'Veo que llamas desde el número X, pero no tengo este teléfono en el sistema. ¿Me dices tu nombre?'\n"
     "- Pregúntale claramente qué desea hacer: ¿crear un nuevo ticket o consultar uno existente?\n"
     "- Cuando el usuario quiera crear un ticket, usa la tool crear_ticket.\n"
     "- Cuando quiera consultar un ticket concreto, usa la tool consultar_ticket.\n"
@@ -102,100 +103,104 @@ async def entrypoint(ctx: JobContext) -> None:
         room_name=ctx.room.name,
     )
 
-    # ── 4. Inicializar cliente GLPI y buscar usuario por teléfono ──────────────
-    glpi = GLPIClient()
-    requester_id = None
-    requester_name: str | None = None
-    if caller_number != "desconocido":
-        requester_id = await glpi.find_user_by_phone(caller_number)
-        if requester_id:
-            requester_name = await glpi.get_user_name(requester_id)
-            logger.info("Comercial identificado en GLPI: user_id=%d, nombre=%s", requester_id, requester_name)
-        else:
-            logger.info("Comercial no encontrado en GLPI para %s; ticket sin asignar.", caller_number)
+    # ── 4. Inicializar cliente GLPI y bloque de contexto ───────────────────────
+    async with GLPIClient() as glpi:
+        requester_id = None
+        requester_name: str | None = None
+        if caller_number != "desconocido":
+            requester_id = await glpi.find_user_by_phone(caller_number)
+            if requester_id:
+                requester_name = await glpi.get_user_name(requester_id)
+                logger.info("Comercial identificado en GLPI: user_id=%d, nombre=%s", requester_id, requester_name)
+            else:
+                logger.info("Comercial no encontrado en GLPI para %s; ticket sin asignar.", caller_number)
 
-    # ── 5. Crear instancia de tools con referencia a la Room, transcripción y caller ───
-    tools = GLPITools(
-        glpi_client=glpi,
-        room=ctx.room,
-        transcription=transcription,
-        caller_number=caller_number,
-    )
-
-    # ── 6. Construir el VoicePipelineAgent ────────────────────────────────────
-    agent = VoicePipelineAgent(
-        # VAD: Silero detecta cuando el usuario empieza/para de hablar
-        # Umbral alto (0.85) para telefonía SIP — evita que eco/ruido corte al agente
-        vad=silero.VAD.load(
-            activation_threshold=0.85,
-        ),
-
-        # STT: Deepgram Nova-2 en español
-        stt=deepgram.STT(
-            model="nova-2",
-            language="es",
-        ),
-
-        # LLM: Llama 3.3 70B vía Groq (compatible con la API de OpenAI)
-        llm=openai.LLM.with_groq(
-            model="llama-3.3-70b-versatile",
-            temperature=0,
-        ),
-
-        # TTS: Cartesia Sonic Multilingual — voz y parámetros óptimos para telefonía (8 kHz)
-        tts=cartesia.TTS(
-            model="sonic-multilingual",
-            language="es",
-            voice=config.CARTESIA_VOICE_ID,
-            encoding="pcm_s16le",
-            sample_rate=8000,
-        ),
-
-        # System prompt con las instrucciones de comportamiento y datos de la llamada
-        chat_ctx=_build_initial_chat_ctx(caller_number, requester_name),
-
-        # Tools disponibles para el LLM
-        fnc_ctx=tools,
-
-        # Parámetros anti-interrupción para telefonía SIP
-        interrupt_min_words=2,          # mínimo 2 palabras del usuario para interrumpir
-        min_endpointing_delay=0.8,      # esperar 0.8s de silencio antes de procesar
-    )
-
-    # ── 7. Listeners para transcripción en tiempo real ─────────────────────────
-
-    @agent.on("user_speech_committed")
-    def on_user_speech(msg: ChatMessage):
-        if msg.content:
-            logger.info("TRANSCRIPCIÓN USUARIO: %s", msg.content)
-            transcription.add_entry("USUARIO", str(msg.content))
-
-    @agent.on("agent_speech_committed")
-    def on_agent_speech(msg: ChatMessage):
-        if msg.content:
-            logger.info("TRANSCRIPCIÓN AGENTE: %s", msg.content)
-            transcription.add_entry("AGENTE", str(msg.content))
-
-    # ── 8. Arrancar el agente y mantener vivo hasta que cuelguen ─────────────
-    agent.start(ctx.room, participant)
-
-    try:
-        # Saludo inicial
-        await agent.say(
-            "Hola, soy el asistente de helpdesk. ¿En qué puedo ayudarte hoy?",
-            allow_interruptions=False,
+        # ── 5. Crear instancia de tools con referencia a la Room, transcripción y caller ───
+        tools = GLPITools(
+            glpi_client=glpi,
+            room=ctx.room,
+            transcription=transcription,
+            caller_number=caller_number,
         )
-        logger.info("VoicePipelineAgent activo y esperando interacción del comercial.")
-        # Mantener el agente vivo hasta que la llamada termine (máximo 1 hora)
-        await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        pass
-    finally:
-        # Cerrar sesión GLPI para no dejar sesiones huérfanas
-        await glpi.kill_session()
-        # Guardar transcripción completa al colgar
-        ruta = await transcription.save_to_file()
-        logger.info("Transcripción guardada en: %s", ruta)
+
+        # ── 6. Construir el VoicePipelineAgent ────────────────────────────────────
+        agent = VoicePipelineAgent(
+            # VAD: Silero detecta cuando el usuario empieza/para de hablar
+            # Umbral alto (0.85) para telefonía SIP — evita que eco/ruido corte al agente
+            vad=silero.VAD.load(
+                activation_threshold=0.85,
+            ),
+
+            # STT: Deepgram Nova-2 en español
+            stt=deepgram.STT(
+                model="nova-2",
+                language="es",
+            ),
+
+            # LLM: Llama 3.3 70B vía Groq (compatible con la API de OpenAI)
+            llm=openai.LLM.with_groq(
+                model="llama-3.3-70b-versatile",
+                temperature=0,
+            ),
+
+            # TTS: Cartesia Sonic Multilingual — voz y parámetros óptimos para telefonía (8 kHz)
+            tts=cartesia.TTS(
+                model="sonic-multilingual",
+                language="es",
+                voice=config.CARTESIA_VOICE_ID,
+                encoding="pcm_s16le",
+                sample_rate=8000,
+            ),
+
+            # System prompt con las instrucciones de comportamiento y datos de la llamada
+            chat_ctx=_build_initial_chat_ctx(caller_number, requester_name),
+
+            # Tools disponibles para el LLM
+            fnc_ctx=tools,
+
+            # Parámetros anti-interrupción para telefonía SIP
+            interrupt_min_words=2,          # mínimo 2 palabras del usuario para interrumpir
+            min_endpointing_delay=0.8,      # esperar 0.8s de silencio antes de procesar
+        )
+
+        # ── 7. Listeners para transcripción en tiempo real ─────────────────────────
+
+        @agent.on("user_speech_committed")
+        def on_user_speech(msg: ChatMessage):
+            if msg.content:
+                logger.info("TRANSCRIPCIÓN USUARIO: %s", msg.content)
+                transcription.add_entry("USUARIO", str(msg.content))
+
+        @agent.on("agent_speech_committed")
+        def on_agent_speech(msg: ChatMessage):
+            if msg.content:
+                logger.info("TRANSCRIPCIÓN AGENTE: %s", msg.content)
+                transcription.add_entry("AGENTE", str(msg.content))
+
+        # ── 8. Arrancar el agente y mantener vivo hasta que cuelguen ─────────────
+        agent.start(ctx.room, participant)
+
+        try:
+            # Saludo inicial nulo. El LLM empezará hablando en el primer turno según el sistema
+            await agent.say(
+                "Hola. Soy el asistente de helpdesk. Permíteme un segundo para identificar tu número.",
+                allow_interruptions=False,
+            )
+            logger.info("VoicePipelineAgent activo y esperando interacción del comercial.")
+            # Mantener el agente vivo hasta que la llamada termine (máximo 1 hora)
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Dentro del finally guardamos la transcripción y lo adjuntamos al GLPI si hay ticket creado.
+            ruta = await transcription.save_to_file()
+            
+            # Verificamos si en la clase tools se guardó un ticket creado
+            if getattr(tools, "ticket_creado_id", None):
+                await transcription.save_to_glpi(glpi, tools.ticket_creado_id)
+            
+            logger.info("Transcripción guardada en: %s", ruta)
+            # El context manager se encierra aquí y llamará a glpi.kill_session() a continuación
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
