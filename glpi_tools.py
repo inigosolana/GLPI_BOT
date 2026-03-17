@@ -221,14 +221,16 @@ class GLPITools(FunctionContext):
         Para cada ticket obtiene: número, título, estado, técnico asignado
         y último comentario. Igual que el bot de Telegram.
         """
-        logger.info("LLM solicita consultar_mis_tickets para caller=%s (requester_id=%s)", self._caller_number, self.requester_id)
+        logger.info("LLM solicita consultar_mis_tickets para caller=%s (requester_id=%s, entities_id=%s)", self._caller_number, self.requester_id, self.entities_id)
         try:
             # Seleccionar entity_id en base a si hemos identificado explícitamente al usuario, o tirar de la fallback_phone
+            # IMPORTANTE: entities_id=0 es la entidad raíz de GLPI, es un valor VÁLIDO.
+            # Usar 'is None' en lugar de 'if not' para no tratar 0 como falso.
             entities_id = self.entities_id
-            if not entities_id:
+            if entities_id is None:
                 entities_id = await self._glpi.find_entity_by_phone(self._caller_number)
                 
-            if not entities_id:
+            if entities_id is None:
                 return (
                     "No conozco para qué empresa trabajas porque aún no te he identificado en el sistema. "
                     "Te recomiendo validarte antes diciendo tu nombre completo."
