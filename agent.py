@@ -32,26 +32,38 @@ SYSTEM_PROMPT = (
     "de comerciales de la empresa. Tu objetivo es ayudarles a crear tickets "
     "de soporte en GLPI o consultar el estado de tickets existentes.\n\n"
     "Reglas de comportamiento:\n"
-    "- Habla siempre en español, de forma clara y concisa\n"
-    "- Las respuestas deben ser cortas porque el usuario está conduciendo\n"
-    "- Cuando el usuario quiera crear un ticket, usa la tool crear_ticket\n"
-    "- Cuando quiera consultar un ticket concreto, usa la tool consultar_ticket\n"
-    "- Cuando quiera ver todos sus tickets abiertos, usa la tool consultar_mis_tickets\n"
-    "- Si el usuario no especifica la urgencia, asume urgencia normal (3)\n"
-    "- Confirma siempre el número de ticket creado al usuario\n"
-    "- Al terminar di 'Hasta luego' y llama a la tool finalizar_llamada"
+    "- Habla SIEMPRE en español, con acento y pronunciación en idioma español.\n"
+    "- Forma de hablar natural, sin acento robótico o extranjero. Nada de inglés.\n"
+    "- Las respuestas deben ser claras y concisas porque el usuario probablemente esté ocupado o conduciendo.\n"
+    "- Identifica a qué persona pertenece el teléfono que llama (lo verás en el contexto). Si lo sabes, salúdale por su nombre.\n"
+    "- Si no lo sabes, dile de qué número llama y pídele que se identifique.\n"
+    "- Pregúntale claramente qué desea hacer: ¿crear un nuevo ticket o consultar uno existente?\n"
+    "- Cuando el usuario quiera crear un ticket, usa la tool crear_ticket.\n"
+    "- Cuando quiera consultar un ticket concreto, usa la tool consultar_ticket.\n"
+    "- Cuando quiera ver todos sus tickets abiertos o consultar los suyos propios, usa la tool consultar_mis_tickets.\n"
+    "- Si el usuario no especifica la urgencia, asume urgencia normal (3).\n"
+    "- Confirma siempre el número del ticket. Al terminar di 'Hasta luego' y llama a la tool finalizar_llamada."
 )
 
 # ── Construcción del ChatContext inicial ───────────────────────────────────────
 
-def _build_initial_chat_ctx() -> ChatContext:
+def _build_initial_chat_ctx(caller_number: str, requester_name: str | None = None) -> ChatContext:
     """
     Construye el ChatContext inicial con el mensaje de sistema.
-    Separado en función propia para mantener entrypoint limpio.
+    Inyecta información sobre el llamante para que el LLM pueda usarla.
     """
     ctx = ChatContext()
+    
+    prompt_dinamico = SYSTEM_PROMPT + "\n\nInformación de esta llamada:\n"
+    prompt_dinamico += f"- Número llamante: {caller_number}\n"
+    
+    if requester_name:
+        prompt_dinamico += f"- Nombre identificado en GLPI: {requester_name}\n"
+    else:
+        prompt_dinamico += "- Nombre identificado en GLPI: Desconocido (no se ha encontrado en el sistema)\n"
+
     ctx.messages.append(
-        ChatMessage(role="system", content=SYSTEM_PROMPT)
+        ChatMessage(role="system", content=prompt_dinamico)
     )
     return ctx
 
@@ -93,10 +105,12 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 4. Inicializar cliente GLPI y buscar usuario por teléfono ──────────────
     glpi = GLPIClient()
     requester_id = None
+    requester_name: str | None = None
     if caller_number != "desconocido":
         requester_id = await glpi.find_user_by_phone(caller_number)
         if requester_id:
-            logger.info("Comercial identificado en GLPI: user_id=%d", requester_id)
+            requester_name = await glpi.get_user_name(requester_id)
+            logger.info("Comercial identificado en GLPI: user_id=%d, nombre=%s", requester_id, requester_name)
         else:
             logger.info("Comercial no encontrado en GLPI para %s; ticket sin asignar.", caller_number)
 
@@ -131,13 +145,14 @@ async def entrypoint(ctx: JobContext) -> None:
         # TTS: Cartesia Sonic Multilingual — voz y parámetros óptimos para telefonía (8 kHz)
         tts=cartesia.TTS(
             model="sonic-multilingual",
+            language="es",
             voice=config.CARTESIA_VOICE_ID,
             encoding="pcm_s16le",
             sample_rate=8000,
         ),
 
-        # System prompt con las instrucciones de comportamiento
-        chat_ctx=_build_initial_chat_ctx(),
+        # System prompt con las instrucciones de comportamiento y datos de la llamada
+        chat_ctx=_build_initial_chat_ctx(caller_number, requester_name),
 
         # Tools disponibles para el LLM
         fnc_ctx=tools,
