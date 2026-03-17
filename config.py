@@ -27,6 +27,7 @@ DEEPGRAM_API_KEY: str = _get_env("DEEPGRAM_API_KEY")
 
 # ── TTS: Cartesia ──────────────────────────────────────────────────────────────
 CARTESIA_API_KEY: str = _get_env("CARTESIA_API_KEY")
+CARTESIA_VOICE_ID: str = _get_env("CARTESIA_VOICE_ID", "02aeee94-c02b-456e-be7a-659672acf82d")
 
 # ── LLM: Groq (compatible OpenAI) ─────────────────────────────────────────────
 GROQ_API_KEY: str = _get_env("GROQ_API_KEY")
